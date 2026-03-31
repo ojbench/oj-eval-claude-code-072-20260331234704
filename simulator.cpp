@@ -4,11 +4,41 @@
 #include <cstdint>
 #include <cstring>
 #include <algorithm>
+#include <map>
 
 using namespace std;
 
 // Memory size (512KB)
 const int MEMORY_SIZE = 524288;
+
+// Simple ELF header structures for 32-bit RISC-V
+struct Elf32_Ehdr {
+    uint8_t  e_ident[16];
+    uint16_t e_type;
+    uint16_t e_machine;
+    uint32_t e_version;
+    uint32_t e_entry;
+    uint32_t e_phoff;
+    uint32_t e_shoff;
+    uint32_t e_flags;
+    uint16_t e_ehsize;
+    uint16_t e_phentsize;
+    uint16_t e_phnum;
+    uint16_t e_shentsize;
+    uint16_t e_shnum;
+    uint16_t e_shstrndx;
+};
+
+struct Elf32_Phdr {
+    uint32_t p_type;
+    uint32_t p_offset;
+    uint32_t p_vaddr;
+    uint32_t p_paddr;
+    uint32_t p_filesz;
+    uint32_t p_memsz;
+    uint32_t p_flags;
+    uint32_t p_align;
+};
 
 class RISCVSimulator {
 private:
@@ -367,10 +397,65 @@ public:
     }
 
     void load_program(const vector<uint8_t>& program, uint32_t start_addr = 0) {
-        for (size_t i = 0; i < program.size() && (start_addr + i) < MEMORY_SIZE; i++) {
-            memory[start_addr + i] = program[i];
+        // Check if this is an ELF file
+        if (program.size() >= 4 && program[0] == 0x7F &&
+            program[1] == 'E' && program[2] == 'L' && program[3] == 'F') {
+            // ELF format - parse and load segments
+            load_elf(program);
+        } else {
+            // Raw binary - load at start_addr
+            for (size_t i = 0; i < program.size() && (start_addr + i) < MEMORY_SIZE; i++) {
+                memory[start_addr + i] = program[i];
+            }
+            pc = start_addr;
         }
-        pc = start_addr;
+    }
+
+    void load_elf(const vector<uint8_t>& elf_data) {
+        if (elf_data.size() < sizeof(Elf32_Ehdr)) {
+            return;
+        }
+
+        // Parse ELF header
+        Elf32_Ehdr ehdr;
+        memcpy(&ehdr, elf_data.data(), sizeof(Elf32_Ehdr));
+
+        // Set entry point
+        pc = ehdr.e_entry;
+
+        // Load program headers
+        if (ehdr.e_phoff == 0 || ehdr.e_phnum == 0) {
+            return;
+        }
+
+        for (int i = 0; i < ehdr.e_phnum; i++) {
+            uint32_t phoff = ehdr.e_phoff + i * ehdr.e_phentsize;
+            if (phoff + sizeof(Elf32_Phdr) > elf_data.size()) {
+                break;
+            }
+
+            Elf32_Phdr phdr;
+            memcpy(&phdr, elf_data.data() + phoff, sizeof(Elf32_Phdr));
+
+            // PT_LOAD = 1
+            if (phdr.p_type == 1) {
+                // Load segment into memory
+                uint32_t vaddr = phdr.p_vaddr;
+                uint32_t filesz = phdr.p_filesz;
+                uint32_t memsz = phdr.p_memsz;
+                uint32_t offset = phdr.p_offset;
+
+                // Copy file data
+                for (uint32_t j = 0; j < filesz && (vaddr + j) < MEMORY_SIZE && (offset + j) < elf_data.size(); j++) {
+                    memory[vaddr + j] = elf_data[offset + j];
+                }
+
+                // Zero-fill remaining memory (BSS)
+                for (uint32_t j = filesz; j < memsz && (vaddr + j) < MEMORY_SIZE; j++) {
+                    memory[vaddr + j] = 0;
+                }
+            }
+        }
     }
 
     void run(int max_instructions = 100000000) {
