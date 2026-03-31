@@ -312,10 +312,32 @@ private:
 
             case 0x73: // ECALL, EBREAK
                 if (inst == 0x00000073) { // ECALL
-                    // System call - check a0 (x10) for exit code
-                    if (reg[10] == 10 || reg[17] == 10) { // a0 == 10 or a7 == 10 means exit
+                    // System call - a7 (x17) contains syscall number
+                    uint32_t syscall = reg[17];
+
+                    // Common syscall numbers:
+                    // 93 (or 10 in some implementations): exit
+                    // 64 (or 1 in some implementations): write
+                    // 63: read
+
+                    if (syscall == 93 || syscall == 10) {
+                        // Exit syscall - finish execution
                         finished = true;
+                    } else if (syscall == 64 || syscall == 1) {
+                        // Write syscall: a0=fd, a1=buffer, a2=count
+                        uint32_t fd = reg[10];
+                        uint32_t buf_addr = reg[11];
+                        uint32_t count = reg[12];
+
+                        // Only handle stdout (fd=1)
+                        if (fd == 1) {
+                            for (uint32_t i = 0; i < count && (buf_addr + i) < MEMORY_SIZE; i++) {
+                                cout << (char)memory[buf_addr + i];
+                            }
+                            reg[10] = count; // Return number of bytes written
+                        }
                     }
+
                     pc += 4;
                 } else if (inst == 0x00100073) { // EBREAK
                     finished = true;
@@ -340,6 +362,8 @@ public:
         memset(memory, 0, sizeof(memory));
         pc = 0;
         finished = false;
+        // Initialize stack pointer to top of memory
+        reg[2] = MEMORY_SIZE - 4;  // sp (x2)
     }
 
     void load_program(const vector<uint8_t>& program, uint32_t start_addr = 0) {
@@ -349,7 +373,7 @@ public:
         pc = start_addr;
     }
 
-    void run(int max_instructions = 10000000) {
+    void run(int max_instructions = 100000000) {
         int count = 0;
         while (!finished && count < max_instructions) {
             if (pc >= MEMORY_SIZE - 3) {
@@ -357,13 +381,20 @@ public:
             }
 
             uint32_t inst = read_memory_word(pc);
+            if (inst == 0) {
+                // Reached uninitialized memory
+                break;
+            }
             execute_instruction(inst);
             count++;
         }
     }
 
     uint32_t get_register(int idx) {
-        return reg[idx];
+        if (idx >= 0 && idx < 32) {
+            return reg[idx];
+        }
+        return 0;
     }
 
     void print_registers() {
@@ -392,7 +423,8 @@ int main() {
     sim.load_program(program);
     sim.run();
 
-    // Output result - typically a0 (x10) or a1 (x11)
+    // Output result - the return value is in a0 (x10)
+    // as indicated by comments in the .c files
     uint32_t result = sim.get_register(10);
     cout << result << endl;
 
