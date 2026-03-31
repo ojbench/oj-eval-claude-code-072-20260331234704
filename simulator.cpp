@@ -394,6 +394,8 @@ public:
         finished = false;
         // Initialize stack pointer to top of memory
         reg[2] = MEMORY_SIZE - 4;  // sp (x2)
+        // Initialize global pointer (gp) to middle of memory for data access
+        reg[3] = MEMORY_SIZE / 2;  // gp (x3)
     }
 
     void load_program(const vector<uint8_t>& program, uint32_t start_addr = 0) {
@@ -466,10 +468,7 @@ public:
             }
 
             uint32_t inst = read_memory_word(pc);
-            if (inst == 0) {
-                // Reached uninitialized memory
-                break;
-            }
+            // Don't stop on null instruction - let it be decoded as NOP or invalid
             execute_instruction(inst);
             count++;
         }
@@ -509,9 +508,9 @@ int main() {
     sim.run();
 
     // Output result - the return value is in a0 (x10)
-    // as indicated by comments in the .c files
-    uint32_t result = sim.get_register(10);
-    cout << result << endl;
+    // Output as signed decimal (C programs typically return signed int)
+    int32_t result = (int32_t)sim.get_register(10);
+    printf("%d\n", result);
 
     return 0;
 }
